@@ -1,0 +1,16 @@
+# Python Virtual Environments
+envs/
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+
+# Build & Tool Artifacts (Generated locally, not tracked)
+hls4ml_projects/
+nn2fpga_projects/
+nngen_output/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
