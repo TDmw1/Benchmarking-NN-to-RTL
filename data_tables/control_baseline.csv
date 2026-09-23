@@ -1,0 +1,9 @@
+model_name,precision,session_init_ms,warmup_ms,mean_latency_ms,p95_latency_ms
+mlp_small,FP32,27.04,1.19,0.007,0.008
+mlp_small,INT8,1.24,0.39,0.006,0.007
+cnn_lenet,FP32,1.57,0.61,0.017,0.025
+cnn_lenet,INT8,2.56,1.45,0.06,0.112
+cnn_skip,FP32,1.42,0.22,0.022,0.031
+cnn_skip,INT8,1.46,1.12,0.073,0.14
+cnn_unusual_op,FP32,1.88,0.24,0.017,0.025
+cnn_unusual_op,INT8,1.34,1.25,0.119,0.224
