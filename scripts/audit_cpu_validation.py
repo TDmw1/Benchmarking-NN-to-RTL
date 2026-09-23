@@ -27,7 +27,10 @@ def burn_process_init_overhead() -> float:
         [helper.make_tensor_value_info("X", TensorProto.FLOAT, [1, 1])],
         [helper.make_tensor_value_info("Y", TensorProto.FLOAT, [1, 1])],
     )
-    dummy_bytes = helper.make_model(graph).SerializeToString()
+    dummy_bytes = helper.make_model(
+        graph, 
+        opset_imports=[helper.make_opsetid("", 18)]
+    ).SerializeToString()
 
     opts = ort.SessionOptions()
     opts.inter_op_num_threads = 1

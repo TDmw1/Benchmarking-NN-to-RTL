@@ -1,9 +1,9 @@
 model_name,quant_tool,quant_scheme,fp32_baseline_accuracy,quantized_accuracy,accuracy_delta
 mlp_small,qonnx,arbitrary_scale,94.7,94.8,0.1
 mlp_small,nngen,pow2_scale,94.7,94.7,0.0
-cnn_lenet,qonnx,arbitrary_scale,96.4,96.5,0.1
+cnn_lenet,qonnx,arbitrary_scale,96.4,96.3,-0.1
 cnn_lenet,nngen,pow2_scale,96.4,,
-cnn_skip,qonnx,arbitrary_scale,97.4,97.5,0.1
+cnn_skip,qonnx,arbitrary_scale,97.4,97.4,0.0
 cnn_skip,nngen,pow2_scale,97.4,,
 cnn_unusual_op,qonnx,arbitrary_scale,96.8,96.8,0.0
 cnn_unusual_op,nngen,pow2_scale,96.8,,
