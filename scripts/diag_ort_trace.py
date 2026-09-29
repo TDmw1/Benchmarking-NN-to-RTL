@@ -1,7 +1,10 @@
 import onnxruntime as ort
 import numpy as np
 
-model_path = "quantized/qonnx/cnn_skip_int8.onnx"
+#model_path = "quantized/qonnx/cnn_skip_int8.onnx"
+model_path = "models/cnn_skip/model.onnx"
+
+
 
 # Enable ONNX Runtime Profiling
 sess_options = ort.SessionOptions()
