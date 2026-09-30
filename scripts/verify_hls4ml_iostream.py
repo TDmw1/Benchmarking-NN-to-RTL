@@ -57,11 +57,22 @@ config = hls4ml.utils.config_from_onnx_model(
 )
 config['Model']['ReuseFactor'] = 1
 
+# Fix confirmed on mlp_small (12.0% -> 100.0%) and cnn_lenet (11.0% -> 100.0%) argmax agreement:
+# hls4ml's default 'model_default_t' (ap_fixed<16,6>, 10 fractional bits, resolution ~0.001)
+# silently rounds real QONNX quant scales smaller than that to zero in the fused Add/ApplyAlpha
+# layers, zeroing out the entire weighted contribution and leaving only the bias term. Testing
+# here whether the same override also resolves cnn_skip's Add-node (skip-connection merge) case.
+for layer_name in list(config['LayerName'].keys()):
+    if (layer_name.startswith('Add_') or layer_name.startswith('Quant_')) and '_param' not in layer_name:
+        config['LayerName'][layer_name].setdefault('Precision', {})
+        config['LayerName'][layer_name]['Precision']['scale'] = 'ap_fixed<32,16>'
+        config['LayerName'][layer_name]['Precision']['bias'] = 'ap_fixed<32,16>'
+
 hls_model = hls4ml.converters.convert_from_onnx_model(
     hls_model_wrapper,
     hls_config=config,
     output_dir=HLS_PROJECT_DIR,
-    part='xcvu9p-flgb2104-2-e',
+    part='xczu9eg-ffvb1156-2-e',  # ZCU102 (Zynq UltraScale+ MPSoC)
     backend='Vivado',
     io_type='io_stream',
 )

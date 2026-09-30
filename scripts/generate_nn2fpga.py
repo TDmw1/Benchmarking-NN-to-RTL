@@ -24,7 +24,7 @@ project_root = "{project_root}"
 hls_version = 2025.2
 
 [platform]
-board = "KRIA"
+board = "ZCU102"
 frequency = 250
 
 [steps]

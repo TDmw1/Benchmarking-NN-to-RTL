@@ -50,7 +50,7 @@ for model_name in MODELS:
             model,
             hls_config=config,
             output_dir=output_dir,
-            part='xcvu9p-flgb2104-2-e', 
+            part='xczu9eg-ffvb1156-2-e',  # ZCU102 (Zynq UltraScale+ MPSoC)
             backend='Vivado'
         )
         

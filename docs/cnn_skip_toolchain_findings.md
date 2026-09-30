@@ -160,3 +160,139 @@ info across a residual `Add` under QONNX; nn2FPGA never attaches
 quantization info to a ReLU at all, in any format. Documenting this as-is
 rather than continuing to patch around it. `mlp_small`'s InferLayouts issue
 on nn2FPGA is the one loose thread left if that toolchain gets revisited.
+
+---
+
+## Follow-up: mlp_small and cnn_lenet weren't actually working either
+
+"Converts cleanly" and "produces correct numbers" turned out to be two
+different claims, and the table above only ever checked the first one for
+`mlp_small` and `cnn_lenet`. Went back and ran an actual batch accuracy
+check — 100 real MNIST samples, hls4ml C-sim output vs a genuine QONNX
+reference execution, same method used on `cnn_skip` above — and both
+"working" models came back at **12.0%** and **11.0%** argmax agreement.
+Basically random.
+
+First read on this looked like a script bug, not a model bug: both models
+predicted the exact same wrong class on the exact same sample indices,
+which is the kind of thing you'd expect from a shared compiled library
+getting reused across two different model builds in one Python process
+(hls4ml's `build_lib.sh` hardcodes `PROJECT=myproject`, so that's not a
+crazy theory). Reran each model in its own separate process to rule that
+out completely. Same 12.0%/11.0%, same wrong class, same samples. Not a
+script bug — both models are genuinely producing wrong output.
+
+### Tracing it down
+
+Same warning as `cnn_skip` shows up for both of these models too:
+
+```text
+Failed to propagate quantization bias down Add node; model probably not suppored.
+```
+
+Not just on the skip connection — on every ordinary bias-add `Add` node in
+both architectures. Read the actual pass this warning comes from
+(`move_scales.py`, `BiasDownAdd`): it only knows how to move an `ApplyAlpha`
+below an `Add` when that `ApplyAlpha`'s scale is exactly zero — a pure bias
+shift. Any real quantized layer needs a genuine multiplicative rescale
+there, so the scale is never zero, and the pass just gives up silently and
+leaves the graph as-is.
+
+Checked what "leaves the graph as-is" actually generates in the C++. Not
+a dropped node — `ApplyAlpha` is a fully supported layer type in every
+backend, implemented via the same code path as batchnorm. What actually
+gets emitted is a direct fusion:
+
+```cpp
+nnet::normalize<Dense_MatMul_0_result_t, bn_Add_0_result_t, config60>(layer63_out, layer60_out, s60, b60); // bn_Add_0
+```
+
+`layer60_out = s60 * layer63_out + b60` — computed straight off the raw
+MatMul accumulator, using the real weight-quant scale and the real trained
+bias. Structurally fine. Pulled the actual scale/bias values out of the
+generated weight files to check they weren't corrupted or zeroed —
+they weren't; `s60`/`s61`/`s62` were real fractional numbers like
+`0.0000608274`, and the biases were plausible trained values.
+
+The values were real. The type holding them wasn't wide enough. Printed
+the model's full output vector for one sample and it was nearly identical
+to the raw bias vector alone:
+
+```text
+b62:        -0.2012739, -0.0812153, -0.1533047,  0.1661686, ...
+hls4ml out: -0.2021484, -0.0820313, -0.1533203,  0.1660156, ...
+```
+
+The weighted contribution had vanished, leaving just the bias. Root cause:
+`scale_t`/`bias_t` for these fused layers default to `model_default_t`,
+which is `ap_fixed<16,6>` — 10 fractional bits, resolution ~0.001. The real
+scale values here are around `0.0002`, smaller than that resolution, so
+they silently round to zero the moment they're cast into that type.
+Multiply anything by zero and only the bias survives — which also explains
+why both models kept predicting the same wrong class: with the weighted
+term gone, the prediction just becomes whichever output index has the
+largest bias, a fixed property of each trained model, independent of the
+actual input.
+
+### The fix
+
+hls4ml lets you override precision per layer. Widening `scale_t`/`bias_t`
+on every `Add_N` and `Quant_N` layer fixes it:
+
+```python
+for layer_name in list(config['LayerName'].keys()):
+    if (layer_name.startswith('Add_') or layer_name.startswith('Quant_')) and '_param' not in layer_name:
+        config['LayerName'][layer_name].setdefault('Precision', {})
+        config['LayerName'][layer_name]['Precision']['scale'] = 'ap_fixed<32,16>'
+        config['LayerName'][layer_name]['Precision']['bias'] = 'ap_fixed<32,16>'
+```
+
+Confirmed on real batch runs, 100 samples each:
+
+| Model | Before | After |
+|---|---|---|
+| `mlp_small` | 12.0% | **100.0%** |
+| `cnn_lenet` | 11.0% | **100.0%** |
+
+So this isn't "hls4ml can't handle quantized bias adds" — it's a real gap
+in `config_from_onnx_model`'s automatic precision inference for these
+specific fused layers, and it's fixable with a config override once you
+know to look for it.
+
+### Retesting cnn_skip with the same fix
+
+Applied the identical override to the `io_stream` conversion for
+`cnn_skip`. First sample checked came back with a correct argmax — looked
+promising. Ran the full 100-sample batch to actually confirm it, same as
+the other two, and got **27.0%** agreement. So the single sample was
+a coincidence, not a fix.
+
+`cnn_skip` has a second, separate problem that this override doesn't
+touch. The same hundreds of `layer57_out` "read while empty" warnings from
+before are still there, and this run additionally crashed on exit
+(`recursive_mutex lock failed`) — a sign of real instability in the
+generated `io_stream` dataflow, not just a numeric rounding issue. Reading
+a stream before anything's written to it is what happens when `io_stream`'s
+buffering doesn't correctly account for two paths of different length
+arriving at the same merge node — which is exactly the shape a skip
+connection creates (a short path straight to the `Add`, and a longer path
+through the second `Conv`). That's a scheduling/FIFO-depth problem in
+hls4ml's `io_stream` backend, separate from the quantization-precision
+issue above, and a lot deeper to fix.
+
+### Where things actually stand now
+
+| Model | hls4ml |
+|---|---|
+| `mlp_small` | **100% argmax agreement** after the precision override |
+| `cnn_lenet` | **100% argmax agreement** after the precision override |
+| `cnn_skip` | precision override applied, still only 27% — separate `io_stream` dataflow/buffering bug on the skip connection, root-caused but not fixed |
+| `cnn_unusual_op` | unchanged — fails earlier, at conversion (depth multiplier, format-independent) |
+
+Two of the three models that could even get through conversion are now
+looking verified to be working, not just "compiled without an exception."
+`cnn_skip`'s failure was never really about hls4ml being unable to do
+skip connections at all — it's two separate, both real, both
+source-confirmed problems stacked on top of each other: a general
+precision-inference gap (fixed) and a skip-connection-specific `io_stream`
+buffering bug (not fixed, left as a documented open item).
